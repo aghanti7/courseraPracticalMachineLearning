@@ -1,0 +1,206 @@
+---
+title: "Practical Machine Learning - Course Project: Quantification of Exercise Quality"
+author: "Ajay Ghanti"
+date: "February 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(caret)
+require(rpart)
+require(randomForest)
+require(parallel)
+require(doParallel)
+```
+
+## Synopsis
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways (See References section below for more details about the original research).
+
+The goal of our project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. At the end, we will use the other variables to build a model that can be used to predict 20 different test cases.
+
+
+## Getting and Cleaning the Data
+
+```{r getTheData}
+# download the training data
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+              destfile = "./pml-training.csv", method = "curl")
+
+# download the testing data
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+              destfile = "./pml-testing.csv", method = "curl")
+
+# read the data
+dTrain <- read.csv("./pml-training.csv", na.strings=c("NA", ""))
+dTest <- read.csv("./pml-testing.csv", na.strings=c("NA", ""))
+
+# take a cursory look at the data
+# commented out for sake of brevity of the report
+#str(data.train)
+#summary(data.train)
+#sapply(data.train, class)
+```
+
+A quick look at the data shows that a lot of the variables are read in as factors, because of an NA string "#DIV/0!". Let us replace this string with NAs.
+
+```{r cleanTheData}
+# replace missing/invalid values with NA
+dTrain[dTrain == "#DIV/0!"] = NA
+dTest[dTest == "#DIV/0!"] = NA
+
+# force convert all the columns with measurement values to numeric
+# columns 8 through the last but one
+for (c in (8:ncol(dTrain)-1)) {
+    dTrain[, c] = as.numeric(dTrain[, c])
+}
+for (c in (8:ncol(dTest)-1)) {
+    dTest[, c] = as.numeric(dTest[, c])
+}
+```
+
+The test data set has a lot of columns with NAs. We have only 20 observations in the test data set, so we need to ensure that we are considering only those features which have no NAs.
+
+```{r removeNaData}
+# ignore the features with NAs
+featuresToUse <- names(dTest[, colSums(is.na(dTest)) == 0])
+# ignore first 7 columns as they are metadata
+# and the last column is either classe/problem_id
+featuresToUse <- featuresToUse[8:length(featuresToUse)-1]
+```
+
+The features that we have decided to use as predictors are as follows:
+
+```{r featuresToUse}
+featuresToUse
+```
+
+We can confirm that we have the right list, as none of these features have near zero variance in the training set.
+
+```{r nearZeroVar}
+nearZeroVar(dTrain[featuresToUse])
+```
+
+Next, subset the training and test sets with the set of features we are considering, and partition the training set into model training and test sets (split 70:30).
+
+```{r dataPartition}
+set.seed(7777777)
+dTrain <- dTrain[c(featuresToUse,"classe")]
+dTest <- dTest[c(featuresToUse,"problem_id")]
+
+# partition the training data into model training and test sets
+inTrain <- createDataPartition(dTrain$classe, p=0.7, list=FALSE)
+modTrain <- dTrain[inTrain,]
+modTest <- dTrain[-inTrain,]
+```
+
+
+## Evaluating Machine Learning Models
+
+### Model Building
+
+Let us start with spot checking some machine learning algorithms provided in the caret package. Cross validation with 5 or 10 folds usually gives a decent trade off of speed vs. generalized error estimate. We shall use *Repeated Cross Validation* with 10 folds and 3 repeats to get a more robust estimate.
+To improve performance of the machine learning algortihms, we will also enable parallel processing that the caret package supports.
+We have picked a diverse set of models to evaluate - linear (LDA), trees (CART), and some ensemble methods (Bagged CART, Random Forest, Stochastic Gradient Boosting).
+
+```{r modelBuild, message=FALSE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fit.control <- trainControl(method="repeatedcv", number=10, repeats=3, allowParallel=TRUE)
+
+# Linear Discriminant Analysis
+fit.lda <- train(classe ~ ., data=modTrain, method="lda", metric="Accuracy", trControl=fit.control)
+
+# CART
+fit.cart <- train(classe ~ ., data=modTrain, method="rpart", metric="Accuracy", trControl=fit.control)
+
+# Bagged CART
+fit.treebag <- train(classe ~ ., data=modTrain, method="treebag", metric="Accuracy", trControl=fit.control)
+
+# Random Forest
+fit.rf <- train(classe ~ ., data=modTrain, method="rf", metric="Accuracy", trControl=fit.control)
+
+# Stochastic Gradient Boosting (Generalized Boosted Modeling)
+fit.gbm <- train(classe ~ ., data=modTrain, method="gbm", metric="Accuracy", trControl=fit.control)
+```
+
+### Model Selection
+
+Now that we have trained the above models, let us compare and evaluate them.
+
+```{r modelSelect, message=FALSE}
+results <- resamples(list(lda=fit.lda, cart=fit.cart, treebag=fit.treebag, rf=fit.rf, gbm=fit.gbm))
+# table comparison
+summary(results)
+# plot the results
+bwplot(results)
+```
+
+From the above results, as well as the plot, it is evident that the ensemble methods perform way better than the linear and tree models. The random forest model has the best accuracy (Mean: 0.9976), although with the narrowest range [0.9956 - 1.0]. Bagged CART is the second best (Mean: 0.9958). hence we shall select the random forest model for our further analysis.
+
+### Error Estimates
+
+Let us compare the in sample errors for both these models.
+
+```{r inSampleError, message=FALSE}
+# get the values predicted by Bagged CART
+predModTrainTb <- predict(fit.treebag, newdata=modTrain[featuresToUse])
+# get the values predicted by Random Forest
+predModTrainRf <- predict(fit.rf, newdata=modTrain[featuresToUse])
+
+# overall statistics: in sample error for Bagged CART
+confusionMatrix(predModTrainTb, modTrain$classe)$overall
+
+# overall statistics: in sample error for Random Forest
+confusionMatrix(predModTrainRf, modTrain$classe)$overall
+```
+
+It can be seen that the in sample errors for both models are similar and unrealistically high. Now let us see the out sample errors, computing them on the test set, that we partitioned earlier from the larger training set.
+
+```{r outSampleError, message=FALSE}
+# get the values predicted by Bagged CART
+predModTestTb <- predict(fit.treebag, newdata=modTest[featuresToUse])
+# get the values predicted by Random Forest
+predModTestRf <- predict(fit.rf, newdata=modTest[featuresToUse])
+
+# overall statistics: in sample error for Bagged CART
+confusionMatrix(predModTestTb, modTest$classe)$overall
+
+# overall statistics: in sample error for Random Forest
+confusionMatrix(predModTestRf, modTest$classe)$overall
+```
+
+Here, the random forest model performs marginally better, with an accuracy of 99.81%. Let us print out the confusion matrix for this model.
+
+```{r finalModel}
+confusionMatrix(predModTestRf, modTest$classe)
+```
+
+
+## Summary
+
+Based on our analysis, we selected the **Random Forest** model, as it has the highest accuracy (99.81%), as well as very high per-class sensitivity and specifivity values. Hence, using this model, we will predict the *classe* variable for the actual test set of 20 observations.
+
+```{r prediction}
+# get the values predicted by Random Forest
+predictions <- predict(fit.rf, newdata=dTest[featuresToUse])
+predictions
+```
+
+
+## References
+
+[Practical Machine Learning: Required Model Accuracy for Course project](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-requiredModelAccuracy.md)
+
+[Improving Performance of Random Forest in caret::train()](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md)
+
+[HAR: Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har)
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201). Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+```{r cleanup, include=FALSE, message=FALSE}
+stopCluster(cluster)
+registerDoSEQ()
+```
