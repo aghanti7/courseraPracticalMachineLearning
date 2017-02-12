@@ -138,7 +138,7 @@ summary(results)
 bwplot(results)
 ```
 
-From the above results, as well as the plot, it is evident that the ensemble methods perform way better than the linear and tree models. The random forest model has the best accuracy (Mean: 0.9976), although with the narrowest range [0.9956 - 1.0]. Bagged CART is the second best (Mean: 0.9958). hence we shall select the random forest model for our further analysis.
+From the above results, as well as the plot, it is evident that the ensemble methods perform way better than the linear and tree models. The random forest model has the best accuracy (Mean: 0.9968), although with the narrowest range [0.9913 - 1.0]. Bagged CART is the second best (Mean: 0.9925). hence we shall select the random forest model for our further analysis.
 
 ### Error Estimates
 
@@ -172,7 +172,7 @@ confusionMatrix(predModTestTb, modTest$classe)$overall
 confusionMatrix(predModTestRf, modTest$classe)$overall
 ```
 
-Here, the random forest model performs marginally better, with an accuracy of 99.81%. Let us print out the confusion matrix for this model.
+Here, the random forest model performs marginally better, with an accuracy of 99.69%. Let us print out the confusion matrix for this model.
 
 ```{r finalModel}
 confusionMatrix(predModTestRf, modTest$classe)
@@ -181,7 +181,7 @@ confusionMatrix(predModTestRf, modTest$classe)
 
 ## Summary
 
-Based on our analysis, we selected the **Random Forest** model, as it has the highest accuracy (99.81%), as well as very high per-class sensitivity and specifivity values. Hence, using this model, we will predict the *classe* variable for the actual test set of 20 observations.
+Based on our analysis, we selected the **Random Forest** model, as it has the highest accuracy (99.69%), as well as very high per-class sensitivity and specifivity values. Hence, using this model, we will predict the *classe* variable for the actual test set of 20 observations.
 
 ```{r prediction}
 # get the values predicted by Random Forest
